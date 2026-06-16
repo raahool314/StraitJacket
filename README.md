@@ -29,7 +29,7 @@ If the sinkhole can't start, the service falls back to hosts-only blocking.
 
 | Source file | Scope | Sinkhole | Hosts | Firewall |
 |-------------|-------|:--------:|:-----:|:--------:|
-| `blocklist.txt`  | Hand-curated domains (social media, news, adult, AI-NSFW, …). A `www.` variant is added automatically. | ✅ | ✅ | ✅ |
+| `blocklist.txt`  | Hand-curated domains (social media, news, adult, AI-NSFW, OTT/streaming, gaming, …). A `www.` variant is added automatically. | ✅ | ✅ | ✅ |
 | `hostsonly.txt`  | Domains where IP blocking would cause collateral damage (e.g. Google search shares front-end IPs with Gmail/Drive). Also where **search-engine blocking** lives. | ✅ | ✅ | ❌ |
 | `feeds.txt`      | Large auto-updating blocklists (default: StevenBlack porn-only, ~77k domains). Downloaded on start + **daily**, cached to disk. | ✅ | ❌ | ❌ |
 | `safesearch.txt` | Forced-SafeSearch redirects: pins search engines to their providers' SafeSearch IPs. (Disabled by default — engines are fully blocked instead.) | ✅ | ✅ | ❌ |
