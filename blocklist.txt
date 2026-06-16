@@ -1,0 +1,162 @@
+# StraitJacket blocklist
+# One domain per line. Lines starting with '#' are ignored.
+# Schemes and paths are stripped automatically, and a "www." variant is
+# added for each entry. Edit this file (as admin) then restart the service,
+# or just wait up to 30 seconds for it to be re-applied.
+
+# ============================================================
+# Original list
+# ============================================================
+facebook.com
+instagram.com
+tiktok.com
+x.com
+reddit.com
+youtube.com
+
+# ============================================================
+# Adult / pornography
+# ============================================================
+pornhub.com
+xvideos.com
+xnxx.com
+xhamster.com
+redtube.com
+youporn.com
+youjizz.com
+spankbang.com
+tube8.com
+beeg.com
+porn.com
+porntrex.com
+hqporner.com
+eporner.com
+txxx.com
+tnaflix.com
+motherless.com
+sex.com
+xvideos2.com
+fapello.com
+thumbzilla.com
+porntube.com
+4tube.com
+empflix.com
+drtuber.com
+nuvid.com
+pornhd.com
+porn300.com
+upornia.com
+hclips.com
+gotporn.com
+sextvx.com
+ixxx.com
+
+# --- Cam / live ---
+chaturbate.com
+livejasmin.com
+bongacams.com
+stripchat.com
+cam4.com
+myfreecams.com
+camsoda.com
+flirt4free.com
+
+# --- Subscription / creator ---
+onlyfans.com
+fansly.com
+manyvids.com
+clips4sale.com
+brazzers.com
+realitykings.com
+naughtyamerica.com
+bangbros.com
+adulttime.com
+
+# --- Hentai / animated ---
+rule34.xxx
+nhentai.net
+e-hentai.org
+hanime.tv
+hentaihaven.xxx
+hentai2read.com
+
+# ============================================================
+# AI sex chat / NSFW AI
+# ============================================================
+candy.ai
+crushon.ai
+janitorai.com
+janitorai.ai
+spicychat.ai
+dreamgf.ai
+kupid.ai
+muah.ai
+promptchan.ai
+soulgen.ai
+pornpen.ai
+herahaven.com
+candyai.com
+nsfwlover.com
+deepswap.ai
+undress.app
+undressher.app
+nudify.online
+seduced.ai
+girlfriendgpt.ai
+charstar.ai
+ourdream.ai
+joyland.ai
+replika.com
+
+# ============================================================
+# News
+# ============================================================
+cnn.com
+foxnews.com
+bbc.com
+bbc.co.uk
+nytimes.com
+washingtonpost.com
+theguardian.com
+reuters.com
+apnews.com
+nbcnews.com
+abcnews.go.com
+cbsnews.com
+msnbc.com
+usatoday.com
+wsj.com
+bloomberg.com
+forbes.com
+businessinsider.com
+huffpost.com
+vox.com
+politico.com
+thehill.com
+breitbart.com
+dailymail.co.uk
+nypost.com
+npr.org
+aljazeera.com
+news.yahoo.com
+buzzfeednews.com
+newsweek.com
+time.com
+theatlantic.com
+economist.com
+ft.com
+cnbc.com
+marketwatch.com
+axios.com
+slate.com
+salon.com
+dailywire.com
+news.google.com
+drudgereport.com
+infowars.com
+rt.com
+skynews.com
+independent.co.uk
+telegraph.co.uk
+mirror.co.uk
+metro.co.uk

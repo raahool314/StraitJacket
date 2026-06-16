@@ -1,0 +1,12 @@
+# StraitJacket auto-updating feeds
+# One blocklist URL per line. Lines starting with '#' are ignored.
+# Feeds may be in hosts format ("0.0.0.0 domain") or one-domain-per-line.
+# All feed domains are merged into the hosts-file layer and refreshed daily.
+# (The firewall layer uses blocklist.txt only, not these feeds.)
+
+# Adult / pornography (StevenBlack porn-only, ~77k domains, well maintained)
+https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/porn-only/hosts
+
+# For much broader coverage (~500k domains) you can ALSO enable the line below,
+# but note it makes the hosts file large and can slow DNS resolution:
+# https://blocklistproject.github.io/Lists/porn.txt

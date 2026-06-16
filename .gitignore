@@ -1,0 +1,10 @@
+# Build output
+*.exe
+*.pdb
+bin/
+obj/
+
+# Runtime artifacts (generated in the install dir at runtime)
+straitjacket.log
+feed_cache.txt
+safesearch_cache.txt
