@@ -1,0 +1,23 @@
+# StraitJacket application blocklist
+# Programs listed here are blocked from ALL network access with program-scoped
+# Windows Firewall rules (named StraitJacket-AppBlock), independent of domain or
+# IP. This is what stops clients like the Steam app, which download game content
+# from a large, shifting set of CDN hosts (*.steamcontent.com, akamai/cloudflare
+# edges, ...) that the exact-match domain and shared-IP firewall layers cannot
+# reliably cover.
+#
+# One entry per line. Each line is either:
+#   * a bare executable name, e.g.  steam.exe
+#       - matched against currently running processes
+#       - Steam specifically is also located via the registry, so it is blocked
+#         even when it is not running (downloads stopped before launch)
+#   * a full path, e.g.
+#       C:\Program Files (x86)\Steam\steam.exe
+#
+# Rules are rebuilt within ~30 seconds of a change and reapplied on every
+# enforcement tick, so tampering is reverted automatically.
+
+# --- Steam ---
+steam.exe
+steamwebhelper.exe
+steamservice.exe

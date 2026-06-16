@@ -41,6 +41,7 @@ if ($existing) {
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 Copy-Item (Join-Path $Root "blocklist.txt")  (Join-Path $InstallDir "blocklist.txt")  -Force
 Copy-Item (Join-Path $Root "hostsonly.txt")  (Join-Path $InstallDir "hostsonly.txt")  -Force
+Copy-Item (Join-Path $Root "appblock.txt")   (Join-Path $InstallDir "appblock.txt")   -Force
 Copy-Item (Join-Path $Root "feeds.txt")      (Join-Path $InstallDir "feeds.txt")      -Force
 Copy-Item (Join-Path $Root "safesearch.txt") (Join-Path $InstallDir "safesearch.txt") -Force
 

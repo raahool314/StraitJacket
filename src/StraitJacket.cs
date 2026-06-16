@@ -32,6 +32,7 @@ namespace StraitJacket
         readonly string _baseDir;
         readonly string _blocklistPath;
         readonly string _hostsOnlyPath;
+        readonly string _appBlockPath;
         readonly string _feedsPath;
         readonly string _feedCachePath;
         readonly string _safeSearchPath;
@@ -41,6 +42,7 @@ namespace StraitJacket
         Timer _timer;
         Timer _feedTimer;
         string _lastFirewallSignature;
+        string _lastAppBlockSignature;
 
         // Domains pulled from remote feeds. Reference is swapped atomically when
         // a refresh completes; read on the enforcement thread.
@@ -73,6 +75,7 @@ namespace StraitJacket
             _baseDir = AppDomain.CurrentDomain.BaseDirectory;
             _blocklistPath = Path.Combine(_baseDir, "blocklist.txt");
             _hostsOnlyPath = Path.Combine(_baseDir, "hostsonly.txt");
+            _appBlockPath = Path.Combine(_baseDir, "appblock.txt");
             _feedsPath = Path.Combine(_baseDir, "feeds.txt");
             _feedCachePath = Path.Combine(_baseDir, "feed_cache.txt");
             _safeSearchPath = Path.Combine(_baseDir, "safesearch.txt");
@@ -165,6 +168,10 @@ namespace StraitJacket
                 EnforceHosts(manual, hostsOnly);   // small curated lists only
                 UpdateSinkhole(manual, hostsOnly); // curated lists + large feed
                 ApplyFirewall(manual);             // firewall layer is for the manual list only
+
+                // Program-scoped firewall block for clients (e.g. Steam) whose
+                // content CDNs the domain/IP layers can't reliably cover.
+                AppBlockManager.Apply(ReadListFile(_appBlockPath), Log, ref _lastAppBlockSignature);
             }
             catch (Exception ex)
             {
@@ -525,6 +532,21 @@ namespace StraitJacket
                 if (seen.Add(line)) domains.Add(line);
             }
             return domains;
+        }
+
+        // Plain line reader (preserves case and slashes) for non-domain config
+        // such as the app blocklist, which holds executable names and paths.
+        List<string> ReadListFile(string path)
+        {
+            var items = new List<string>();
+            if (!File.Exists(path)) return items;
+            foreach (var raw in File.ReadAllLines(path))
+            {
+                var line = raw.Trim();
+                if (line.Length == 0 || line.StartsWith("#")) continue;
+                items.Add(line);
+            }
+            return items;
         }
 
         void FlushDns()

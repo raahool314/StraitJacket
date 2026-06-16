@@ -33,6 +33,7 @@ If the sinkhole can't start, the service falls back to hosts-only blocking.
 | `hostsonly.txt`  | Domains where IP blocking would cause collateral damage (e.g. Google search shares front-end IPs with Gmail/Drive). Also where **search-engine blocking** lives. | ✅ | ✅ | ❌ |
 | `feeds.txt`      | Large auto-updating blocklists (default: StevenBlack porn-only, ~77k domains). Downloaded on start + **daily**, cached to disk. | ✅ | ❌ | ❌ |
 | `safesearch.txt` | Forced-SafeSearch redirects: pins search engines to their providers' SafeSearch IPs. (Disabled by default — engines are fully blocked instead.) | ✅ | ✅ | ❌ |
+| `appblock.txt`   | Executables to cut off from the network entirely (default: the Steam client). Enforced as **program-scoped** firewall rules — see below. | ❌ | ❌ | ✅* |
 
 The curated lists are written to the hosts file **as well** as the sinkhole, so
 core blocks still hold even if the sinkhole isn't running. The large feed lives
@@ -47,6 +48,25 @@ named `StraitJacket-Block`. This catches users who switch to a custom DNS server
 to evade the hosts file. Rules are rebuilt only when the resolved IP set changes.
 The feed/hosts-only lists are deliberately **not** sent to the firewall (too many
 domains, and shared-IP collateral risk).
+
+### Application blocking (the Steam problem)
+
+Blocking a site's *domains* doesn't stop a desktop client that downloads from a
+large, shifting set of CDN hosts. The **Steam app** is the canonical case: even
+with `steampowered.com` blocked, the client pulls game content from
+`*.steamcontent.com`, `steamcdn-a.akamaihd.net`, and Akamai/Cloudflare edges.
+The sinkhole matches names **exactly** (so `*.steamcontent.com` subdomains slip
+through), and those CDNs sit on **shared IPs** that can't be firewalled without
+collateral damage.
+
+So `appblock.txt` blocks the **executable** instead, with program-scoped
+Windows Firewall rules (`StraitJacket-AppBlock`) that deny it all inbound and
+outbound traffic regardless of domain or IP. Each line is a bare exe name
+(matched against running processes) or a full path. Steam is additionally
+located via the registry so it's blocked **even when it isn't running** —
+downloads are stopped before the client can start them. Rules are rebuilt only
+when the resolved path set changes and reapplied every 30 s, so tampering
+reverts. Ships blocking `steam.exe`, `steamwebhelper.exe`, and `steamservice.exe`.
 
 ### Search-engine policy
 
@@ -87,6 +107,7 @@ them as admin (standard users can't write there), one entry per line:
 
 - `blocklist.txt`  — domains to block at both layers
 - `hostsonly.txt`  — domains to block at the hosts layer only (search engines, etc.)
+- `appblock.txt`   — executables to cut off from the network (e.g. the Steam client)
 - `feeds.txt`      — auto-updating blocklist feed URLs
 - `safesearch.txt` — forced-SafeSearch redirects (optional)
 
@@ -113,11 +134,13 @@ firewall rules, and removes the install directory.
 | `src/StraitJacket.cs`    | The Windows Service: enforcement loop, hosts/sinkhole/DNS. |
 | `src/DnsSinkhole.cs`     | Local DNS server (block from memory + forward upstream).  |
 | `src/DnsResolver.cs`     | Direct-to-DNS resolver (bypasses the hosts file).         |
-| `src/FirewallManager.cs` | Builds/clears the Windows Firewall block rules.           |
+| `src/FirewallManager.cs` | Builds/clears the Windows Firewall IP block rules.        |
+| `src/AppBlockManager.cs` | Builds/clears program-scoped firewall rules (e.g. Steam). |
 | `src/FeedUpdater.cs`     | Downloads & parses remote blocklist feeds.                |
 | `src/SafeSearchManager.cs` | Resolves and maps forced-SafeSearch endpoints.          |
 | `blocklist.txt`          | Curated domains (both layers).                            |
 | `hostsonly.txt`          | Hosts-only blocks, incl. search engines.                  |
+| `appblock.txt`           | Executables to block from the network (e.g. Steam).       |
 | `feeds.txt`              | Auto-updating feed URLs.                                  |
 | `safesearch.txt`         | Forced-SafeSearch redirects.                              |
 | `install.ps1`            | Compile, install, harden, and start the service.          |

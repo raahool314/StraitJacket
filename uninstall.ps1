@@ -48,6 +48,7 @@ try {
 
 # --- remove firewall rules -------------------------------------------------
 netsh advfirewall firewall delete rule name="StraitJacket-Block" | Out-Null
+netsh advfirewall firewall delete rule name="StraitJacket-AppBlock" | Out-Null
 Write-Host "    Firewall rules removed."
 
 ipconfig /flushdns | Out-Null
