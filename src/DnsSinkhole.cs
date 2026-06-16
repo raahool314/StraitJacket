@@ -58,16 +58,19 @@ namespace StraitJacket
             }
             StartThread(delegate { UdpLoop(_udp4); });
 
-            try { _udp6 = new UdpClient(new IPEndPoint(IPAddress.IPv6Loopback, 53)); StartThread(delegate { UdpLoop(_udp6); }); }
+            bool v6 = false;
+            try { _udp6 = new UdpClient(new IPEndPoint(IPAddress.IPv6Loopback, 53)); StartThread(delegate { UdpLoop(_udp6); }); v6 = true; }
             catch (Exception ex) { _log("Sinkhole: IPv6 UDP bind skipped -> " + ex.Message); }
 
             try { _tcp4 = new TcpListener(IPAddress.Loopback, 53); _tcp4.Start(); StartThread(delegate { TcpLoop(_tcp4); }); }
             catch (Exception ex) { _log("Sinkhole: TCP bind skipped -> " + ex.Message); }
 
             try { _tcp6 = new TcpListener(IPAddress.IPv6Loopback, 53); _tcp6.Start(); StartThread(delegate { TcpLoop(_tcp6); }); }
-            catch { }
+            catch (Exception ex) { _log("Sinkhole: IPv6 TCP bind skipped -> " + ex.Message); }
 
-            _log("Sinkhole: listening on 127.0.0.1:53 (UDP/TCP).");
+            _log(v6
+                ? "Sinkhole: listening on 127.0.0.1:53 and [::1]:53 (UDP/TCP)."
+                : "Sinkhole: listening on 127.0.0.1:53 (UDP/TCP); IPv6 unavailable.");
             return true;
         }
 
@@ -90,9 +93,14 @@ namespace StraitJacket
 
         void UdpLoop(UdpClient server)
         {
+            // The receive endpoint's family must match the socket's, otherwise
+            // Receive() throws on the IPv6 socket and the loop spins silently
+            // (binding ::1 but never answering).
+            IPAddress anyAddr = server.Client.AddressFamily == AddressFamily.InterNetworkV6
+                ? IPAddress.IPv6Any : IPAddress.Any;
             while (_running)
             {
-                IPEndPoint remote = new IPEndPoint(IPAddress.Any, 0);
+                IPEndPoint remote = new IPEndPoint(anyAddr, 0);
                 byte[] data;
                 try { data = server.Receive(ref remote); }
                 catch { if (!_running) break; continue; }
