@@ -1,0 +1,109 @@
+# StraitJacket hosts-only blocklist
+# These domains are blocked at the hosts-file layer ONLY (not the firewall),
+# because they often sit on shared infrastructure (e.g. Google search shares
+# front-end IPs with Gmail/Drive) where IP-level blocking would cause
+# collateral damage. A "www." variant is added automatically.
+
+# ============================================================
+# Search engines - ALL blocked EXCEPT lite.duckduckgo.com
+# (lite.duckduckgo.com is a separate host and is intentionally NOT listed,
+#  so it remains reachable as the one allowed, text-only search engine.)
+# ============================================================
+
+# --- Google search (Gmail/Drive/Maps live on other subdomains, unaffected) ---
+google.com
+google.co.uk
+google.ca
+google.com.au
+google.de
+google.fr
+google.es
+google.it
+google.nl
+google.com.br
+google.co.jp
+google.com.mx
+google.ru
+google.pl
+google.com.tr
+google.se
+google.ch
+google.be
+google.at
+google.ie
+google.co.za
+google.com.sg
+google.com.hk
+google.co.kr
+google.co.in
+google.com.ph
+google.com.vn
+google.com.eg
+images.google.com
+encrypted.google.com
+
+# --- Bing ---
+bing.com
+cn.bing.com
+
+# --- Yahoo search ---
+search.yahoo.com
+yahoo.com
+
+# --- DuckDuckGo (everything EXCEPT lite.duckduckgo.com) ---
+duckduckgo.com
+start.duckduckgo.com
+html.duckduckgo.com
+duck.com
+
+# --- Yandex ---
+yandex.com
+yandex.ru
+ya.ru
+yandex.com.tr
+yandex.kz
+yandex.by
+
+# --- Baidu / Sogou / Naver (CN/KR) ---
+baidu.com
+sogou.com
+so.com
+naver.com
+
+# --- Privacy / independent engines ---
+search.brave.com
+startpage.com
+ecosia.org
+qwant.com
+mojeek.com
+yep.com
+swisscows.com
+gibiru.com
+searchencrypt.com
+metager.org
+search.marginalia.nu
+presearch.com
+stract.com
+kagi.com
+
+# --- AI answer engines ---
+perplexity.ai
+you.com
+
+# --- Legacy / metasearch ---
+ask.com
+search.aol.com
+lycos.com
+dogpile.com
+metacrawler.com
+excite.com
+webcrawler.com
+search.com
+millionshort.com
+wiby.me
+
+# --- Common public SearXNG instances (not exhaustive) ---
+searx.be
+searx.tiekoetter.com
+searxng.site
+search.sapti.me

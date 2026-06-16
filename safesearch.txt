@@ -1,0 +1,19 @@
+# StraitJacket forced SafeSearch
+# Format:  <proxy_host>  <engine_host> [engine_host ...]
+# The service resolves <proxy_host> to its current IP and points each
+# <engine_host> at that IP in the hosts file, forcing SafeSearch for every
+# user on this machine. Refreshed daily. Hosts that are fully blocked via
+# blocklist.txt take precedence and are skipped here.
+
+# NOTE: All mainstream search engines are now fully blocked via hostsonly.txt
+# (only lite.duckduckgo.com is allowed, which is text-only), so SafeSearch
+# redirects are redundant and disabled below. Re-enable them if you ever stop
+# blocking a given engine and want it forced to SafeSearch instead.
+
+# forcesafesearch.google.com  google.com www.google.com google.co.uk www.google.co.uk
+# strict.bing.com  bing.com www.bing.com
+# safe.duckduckgo.com  duckduckgo.com www.duckduckgo.com start.duckduckgo.com
+
+# YouTube is fully blocked via blocklist.txt. To allow it in Moderate Restricted
+# Mode instead, remove youtube.com from blocklist.txt and uncomment this line:
+# restrictmoderate.youtube.com  youtube.com www.youtube.com m.youtube.com youtubei.googleapis.com youtube.googleapis.com www.youtube-nocookie.com
