@@ -39,6 +39,13 @@ if (Test-Path $HostsPath) {
     }
 }
 
+# --- restore DNS (sinkhole pinned it to 127.0.0.1) -------------------------
+try {
+    Get-NetAdapter -Physical | Where-Object { $_.Status -eq 'Up' } |
+        Set-DnsClientServerAddress -ResetServerAddresses -ErrorAction SilentlyContinue
+    Write-Host "    System DNS reset to automatic."
+} catch { Write-Host "    (DNS reset skipped: $($_.Exception.Message))" }
+
 # --- remove firewall rules -------------------------------------------------
 netsh advfirewall firewall delete rule name="StraitJacket-Block" | Out-Null
 Write-Host "    Firewall rules removed."

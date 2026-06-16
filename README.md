@@ -6,21 +6,37 @@ cannot be stopped by non-administrator users.
 
 ## How it works
 
-The service maintains a managed block in the system hosts file
-(`C:\Windows\System32\drivers\etc\hosts`), re-applied **every 30 seconds** so
-any tampering is automatically reverted. It draws blocked domains from several
-sources and adds a complementary firewall layer:
+The service combines a **local DNS sinkhole**, a small **hosts-file** block, and
+a **firewall** layer. Blocking is re-applied **every 30 seconds** so tampering is
+automatically reverted. It draws blocked domains from several sources:
 
-### Hosts-file layer (re-enforced every 30s)
+### DNS sinkhole (handles the large lists)
 
-Four sources are merged into the managed block:
+The service runs a tiny DNS server on `127.0.0.1:53` (UDP + TCP) and pins the
+machine's DNS to it. Blocked names are answered from an in-memory set (O(1)
+lookups) with `0.0.0.0` / `::`; everything else is forwarded to an upstream
+resolver (1.1.1.1 / 8.8.8.8) and relayed back. This is what makes the ~77k-domain
+adult feed practical — it lives in memory instead of in a giant hosts file, which
+the Windows DNS Client processes slowly. Matching is **exact** (not suffix-based),
+so blocking `duckduckgo.com` does not affect `lite.duckduckgo.com`, and blocking
+`google.com` does not affect `mail.google.com`.
 
-| Source file | Scope | Firewall too? |
-|-------------|-------|---------------|
-| `blocklist.txt`  | Hand-curated domains (social media, news, adult, AI-NSFW, …). A `www.` variant is added automatically. | ✅ Yes |
-| `hostsonly.txt`  | Domains blocked at the **hosts layer only** — used for sites on shared infrastructure (e.g. Google search shares front-end IPs with Gmail/Drive) where IP blocking would cause collateral damage. Also where **search-engine blocking** lives. | ❌ No |
-| `feeds.txt`      | URLs of large auto-updating blocklists (default: StevenBlack porn-only, ~77k domains). Downloaded on start + **daily**, cached to disk so blocking is active immediately at boot and survives offline boots / failed downloads. | ❌ No |
-| `safesearch.txt` | Forced-SafeSearch redirects: pins search engines to their providers' SafeSearch IPs. (Disabled by default — engines are fully blocked instead; see below.) | ❌ No |
+DNS is pinned **only if the sinkhole binds successfully**, so a port conflict can
+never break name resolution; on service stop / uninstall it is reset to automatic.
+If the sinkhole can't start, the service falls back to hosts-only blocking.
+
+### Source files and where each is enforced
+
+| Source file | Scope | Sinkhole | Hosts | Firewall |
+|-------------|-------|:--------:|:-----:|:--------:|
+| `blocklist.txt`  | Hand-curated domains (social media, news, adult, AI-NSFW, …). A `www.` variant is added automatically. | ✅ | ✅ | ✅ |
+| `hostsonly.txt`  | Domains where IP blocking would cause collateral damage (e.g. Google search shares front-end IPs with Gmail/Drive). Also where **search-engine blocking** lives. | ✅ | ✅ | ❌ |
+| `feeds.txt`      | Large auto-updating blocklists (default: StevenBlack porn-only, ~77k domains). Downloaded on start + **daily**, cached to disk. | ✅ | ❌ | ❌ |
+| `safesearch.txt` | Forced-SafeSearch redirects: pins search engines to their providers' SafeSearch IPs. (Disabled by default — engines are fully blocked instead.) | ✅ | ✅ | ❌ |
+
+The curated lists are written to the hosts file **as well** as the sinkhole, so
+core blocks still hold even if the sinkhole isn't running. The large feed lives
+only in the sinkhole.
 
 ### Firewall layer (curated list only)
 
@@ -94,7 +110,8 @@ firewall rules, and removes the install directory.
 
 | File                     | Purpose                                                  |
 |--------------------------|----------------------------------------------------------|
-| `src/StraitJacket.cs`    | The Windows Service: enforcement loop, hosts management.  |
+| `src/StraitJacket.cs`    | The Windows Service: enforcement loop, hosts/sinkhole/DNS. |
+| `src/DnsSinkhole.cs`     | Local DNS server (block from memory + forward upstream).  |
 | `src/DnsResolver.cs`     | Direct-to-DNS resolver (bypasses the hosts file).         |
 | `src/FirewallManager.cs` | Builds/clears the Windows Firewall block rules.           |
 | `src/FeedUpdater.cs`     | Downloads & parses remote blocklist feeds.                |
@@ -109,14 +126,18 @@ firewall rules, and removes the install directory.
 ## Notes & limitations
 
 - **VPN / proxy** traffic is not blocked — it exits via a different IP the
-  service never sees. For fully tamper-proof filtering, combine this with a
-  network appliance / VPN block at the router.
+  service never sees, and a VPN adapter brings its own DNS that bypasses the
+  sinkhole. For fully tamper-proof filtering, combine this with a network
+  appliance / VPN block at the router.
+- **New network adapters** (docks, tethering, a freshly added VPN) get their own
+  DNS; the sinkhole pins DNS on adapters present/up at service start. The hosts
+  layer still covers the curated lists on any adapter.
 - **"All" lists can't be exhaustive.** New/obscure search engines, private
   SearXNG instances, and freshly-registered adult domains may slip through. Add
   them to the relevant file as you find them; the feed handles bulk adult
   coverage automatically.
-- **Large hosts file → slower DNS.** The adult feed adds ~77k entries, which the
-  Windows DNS Client processes more slowly. A local DNS sinkhole would remove
-  this overhead but is a larger rewrite.
+- **Port 53 must be free** for the sinkhole. If another local DNS service holds
+  it, the sinkhole won't bind and the service falls back to hosts-only blocking
+  (the ~77k feed won't be enforced). The service log records this.
 - Runtime artifacts (log + caches) live in `C:\Program Files\StraitJacket\`:
   `straitjacket.log`, `feed_cache.txt`, `safesearch_cache.txt`.

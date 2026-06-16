@@ -52,6 +52,13 @@ namespace StraitJacket
         Dictionary<string, string> _safeSearchMap = new Dictionary<string, string>();
         int _safeSearchVersion;
 
+        // Local DNS sinkhole. Handles the large feed in memory (instead of a
+        // giant hosts file) and forwards everything else upstream.
+        DnsSinkhole _sinkhole;
+        bool _dnsPinned;
+        string _sinkholeSignature;
+        readonly object _applyLock = new object();
+
         // Cache of the generated managed block, rebuilt only when inputs change.
         string _managedBlockCache;
         string _managedSignature;
@@ -81,10 +88,10 @@ namespace StraitJacket
         protected override void OnStart(string[] args)
         {
             Log("Service starting.");
-            LoadFeedCache();        // make any previously-downloaded feed active immediately
-            LoadSafeSearchCache();  // and the last-known SafeSearch mappings
-            Apply();
 
+            // Keep OnStart fast: SCM must see the service reach Running quickly.
+            // All heavy work (firewall resolution, launching PowerShell to pin
+            // DNS, downloading feeds) happens on a background thread.
             _timer = new Timer(30000) { AutoReset = true };
             _timer.Elapsed += (s, e) => Apply();
             _timer.Start();
@@ -93,8 +100,38 @@ namespace StraitJacket
             _feedTimer.Elapsed += (s, e) => System.Threading.ThreadPool.QueueUserWorkItem(_ => RefreshRemote());
             _feedTimer.Start();
 
-            // Kick off an initial refresh in the background so OnStart returns fast.
-            System.Threading.ThreadPool.QueueUserWorkItem(_ => RefreshRemote());
+            System.Threading.ThreadPool.QueueUserWorkItem(_ => Bootstrap());
+        }
+
+        void Bootstrap()
+        {
+            try
+            {
+                LoadFeedCache();        // make any previously-downloaded feed active immediately
+                LoadSafeSearchCache();  // and the last-known SafeSearch mappings
+
+                // Start the sinkhole, then enforce blocking, then pin DNS to it.
+                _sinkhole = new DnsSinkhole(Log);
+                bool bound = _sinkhole.Start();
+
+                Apply(); // hosts block + sinkhole set + firewall rules
+
+                if (bound)
+                {
+                    PinSystemDns();
+                    _dnsPinned = true;
+                }
+                else
+                {
+                    Log("DNS sinkhole unavailable; relying on hosts-file blocking only.");
+                }
+
+                RefreshRemote(); // download/refresh feeds + SafeSearch
+            }
+            catch (Exception ex)
+            {
+                Log("Bootstrap error: " + ex.Message);
+            }
         }
 
         protected override void OnStop()
@@ -102,23 +139,32 @@ namespace StraitJacket
             Log("Service stop requested.");
             if (_timer != null) _timer.Stop();
             if (_feedTimer != null) _feedTimer.Stop();
-            // Blocks are intentionally left in place on stop; use uninstall.ps1.
+            // Restore DNS before tearing down the sinkhole so name resolution
+            // keeps working once we stop answering on 127.0.0.1.
+            if (_dnsPinned) { UnpinSystemDns(); _dnsPinned = false; }
+            if (_sinkhole != null) _sinkhole.Stop();
+            // Hosts blocks are intentionally left in place on stop; use uninstall.ps1.
         }
 
         protected override void OnShutdown()
         {
             if (_timer != null) _timer.Stop();
             if (_feedTimer != null) _feedTimer.Stop();
+            // On shutdown leave DNS pinned: the service auto-starts at next boot
+            // and the sinkhole comes back up, so blocking is continuous.
+            if (_sinkhole != null) _sinkhole.Stop();
         }
 
         void Apply()
         {
+            lock (_applyLock)
             try
             {
                 List<string> manual = ReadDomainFile(_blocklistPath);
                 List<string> hostsOnly = ReadDomainFile(_hostsOnlyPath);
-                EnforceHosts(manual, hostsOnly);
-                ApplyFirewall(manual); // firewall layer is for the manual list only
+                EnforceHosts(manual, hostsOnly);   // small curated lists only
+                UpdateSinkhole(manual, hostsOnly); // curated lists + large feed
+                ApplyFirewall(manual);             // firewall layer is for the manual list only
             }
             catch (Exception ex)
             {
@@ -152,10 +198,11 @@ namespace StraitJacket
 
         string BuildSignature(List<string> manual, List<string> hostsOnly)
         {
-            // Cheap to compute each pass: local lists are small, feed/SafeSearch
-            // changes bump a version so we know to rebuild the managed block.
+            // Cheap to compute each pass: local lists are small. The large feed
+            // is NOT in the hosts block anymore (it lives in the sinkhole), so
+            // only SafeSearch changes need to bump a version here.
             return string.Join(",", manual.ToArray()) + "|" + string.Join(",", hostsOnly.ToArray())
-                   + "#feed:" + _feedVersion + "#ss:" + _safeSearchVersion;
+                   + "#ss:" + _safeSearchVersion;
         }
 
         string BuildManagedBlock(List<string> manual, List<string> hostsOnly)
@@ -171,14 +218,14 @@ namespace StraitJacket
                 names.Add(d);
                 if (!d.StartsWith("www.")) names.Add("www." + d);
             }
-            HashSet<string> feed = _feedDomains; // snapshot reference
-            if (feed != null)
-                foreach (var d in feed) names.Add(d);
+            // NOTE: the large remote feed is intentionally NOT written to the
+            // hosts file. It is served from memory by the DNS sinkhole, which
+            // avoids the Windows DNS Client's large-hosts-file latency.
 
             var sb = new StringBuilder();
             sb.Append(BeginMarker).Append("\r\n");
             sb.Append("# Managed by StraitJacket - ").Append(names.Count)
-              .Append(" host names blocked. Do not edit by hand.\r\n");
+              .Append(" host names blocked (feed served via DNS sinkhole). Do not edit.\r\n");
             foreach (var n in names)
                 sb.Append("0.0.0.0 ").Append(n).Append("\r\n");
 
@@ -237,6 +284,76 @@ namespace StraitJacket
             FirewallManager.Apply(new List<string>(ipv4), new List<string>(ipv6));
             _lastFirewallSignature = signature;
             Log("Firewall enforced: " + ipv4.Count + " IPv4 + " + ipv6.Count + " IPv6 addresses blocked.");
+        }
+
+        // ---- DNS sinkhole ------------------------------------------------------
+
+        void UpdateSinkhole(List<string> manual, List<string> hostsOnly)
+        {
+            if (_sinkhole == null) return;
+
+            string sig = string.Join(",", manual.ToArray()) + "|" + string.Join(",", hostsOnly.ToArray())
+                         + "#feed:" + _feedVersion + "#ss:" + _safeSearchVersion;
+            if (sig == _sinkholeSignature) return;
+
+            var blocked = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var d in manual)
+            {
+                blocked.Add(d);
+                if (!d.StartsWith("www.")) blocked.Add("www." + d);
+            }
+            foreach (var d in hostsOnly)
+            {
+                blocked.Add(d);
+                if (!d.StartsWith("www.")) blocked.Add("www." + d);
+            }
+            HashSet<string> feed = _feedDomains;
+            if (feed != null)
+                foreach (var d in feed) blocked.Add(d);
+
+            _sinkhole.Update(blocked, _safeSearchMap);
+            _sinkholeSignature = sig;
+            Log("Sinkhole updated: " + blocked.Count + " blocked names in memory.");
+        }
+
+        void PinSystemDns()
+        {
+            RunPowerShell(
+                "Get-NetAdapter -Physical | Where-Object { $_.Status -eq 'Up' } | " +
+                "Set-DnsClientServerAddress -ServerAddresses '127.0.0.1','::1' -ErrorAction SilentlyContinue; " +
+                "Clear-DnsClientCache");
+            Log("System DNS pinned to 127.0.0.1 (sinkhole).");
+        }
+
+        void UnpinSystemDns()
+        {
+            RunPowerShell(
+                "Get-NetAdapter -Physical | Where-Object { $_.Status -eq 'Up' } | " +
+                "Set-DnsClientServerAddress -ResetServerAddresses -ErrorAction SilentlyContinue; " +
+                "Clear-DnsClientCache");
+            Log("System DNS reset to automatic.");
+        }
+
+        void RunPowerShell(string command)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo("powershell.exe",
+                    "-NoProfile -ExecutionPolicy Bypass -Command \"" + command + "\"")
+                {
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                };
+                using (var p = Process.Start(psi))
+                {
+                    if (!p.WaitForExit(20000)) { try { p.Kill(); } catch { } }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("PowerShell run error: " + ex.Message);
+            }
         }
 
         // ---- remote feeds ------------------------------------------------------
