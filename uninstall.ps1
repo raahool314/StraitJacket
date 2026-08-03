@@ -28,7 +28,7 @@ if ($svc) {
 # --- strip the managed block from hosts ------------------------------------
 if (Test-Path $HostsPath) {
     $text = Get-Content -Raw -Path $HostsPath
-    $begin = $text.IndexOf($BeginMarker)
+    $begin = if ($text) { $text.IndexOf($BeginMarker) } else { -1 }
     if ($begin -ge 0) {
         $end = $text.IndexOf($EndMarker, $begin)
         $before = $text.Substring(0, $begin).TrimEnd()
