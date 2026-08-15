@@ -29,6 +29,7 @@ namespace StraitJacket
         const string BeginMarker = "# >>> StraitJacket BEGIN (managed - do not edit) >>>";
         const string EndMarker   = "# <<< StraitJacket END <<<";
         const double FeedRefreshMs = 24 * 60 * 60 * 1000; // daily
+        const double FirewallRebuildMinutes = 10;         // cadence for the IP rules
 
         static readonly string HostsPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.System),
@@ -46,7 +47,6 @@ namespace StraitJacket
 
         Timer _timer;
         Timer _feedTimer;
-        string _lastFirewallSignature;
         string _lastAppBlockSignature;
 
         // Domains pulled from remote feeds. Reference is swapped atomically when
@@ -71,10 +71,16 @@ namespace StraitJacket
         string _managedSignature;
 
         // Set while enforcement is stood down for an administrators-only
-        // machine. Guarded by _applyLock, which also keeps a session change from
-        // racing an enforcement tick.
-        bool _suspended;
+        // machine. Volatile because an enforcement pass reads it without taking
+        // _sessionLock, which exists so a session change never has to wait on a
+        // pass that is busy resolving addresses.
+        volatile bool _suspended;
         bool _sessionStateKnown;
+        readonly object _sessionLock = new object();
+
+        // Serialises firewall passes and records when the rules were last built.
+        readonly object _firewallLock = new object();
+        DateTime _lastFirewallBuildUtc = DateTime.MinValue;
 
         public BlockerService()
         {
@@ -178,26 +184,33 @@ namespace StraitJacket
 
         void Apply()
         {
-            lock (_applyLock)
             try
             {
                 List<string> manual = ReadDomainFile(_blocklistPath);
                 List<string> hostsOnly = ReadDomainFile(_hostsOnlyPath);
 
-                // Keep the sinkhole's data current even while stood down -- it
-                // costs nothing, is invisible until the Suspended flag clears,
-                // and means a standard user logging on is blocked immediately
-                // rather than after the next feed refresh.
-                UpdateSinkhole(manual, hostsOnly); // curated lists + large feed
+                lock (_applyLock)
+                {
+                    // Keep the sinkhole's data current even while stood down --
+                    // it costs nothing, is invisible until the Suspended flag
+                    // clears, and means a standard user logging on is blocked
+                    // immediately rather than after the next feed refresh.
+                    UpdateSinkhole(manual, hostsOnly); // curated lists + large feed
 
-                if (_suspended) return;
+                    if (_suspended) return;
 
-                EnforceHosts(manual, hostsOnly);   // small curated lists only
-                ApplyFirewall(manual);             // firewall layer is for the manual list only
+                    EnforceHosts(manual, hostsOnly);   // small curated lists only
 
-                // Program-scoped firewall block for clients (e.g. Steam) whose
-                // content CDNs the domain/IP layers can't reliably cover.
-                AppBlockManager.Apply(ReadListFile(_appBlockPath), Log, ref _lastAppBlockSignature);
+                    // Program-scoped firewall block for clients (e.g. Steam)
+                    // whose content CDNs the domain/IP layers can't cover.
+                    AppBlockManager.Apply(ReadListFile(_appBlockPath), Log, ref _lastAppBlockSignature);
+                }
+
+                // Resolving the curated list against public DNS takes over a
+                // minute. It runs outside _applyLock deliberately: holding that
+                // lock across it would stall the hosts layer behind a pass that
+                // is mostly spent waiting on the network.
+                if (!_suspended) ApplyFirewall(manual);
             }
             catch (Exception ex)
             {
@@ -223,44 +236,61 @@ namespace StraitJacket
             string summary;
             if (!SessionGuard.TryEvaluate(out suspend, out summary))
             {
-                // Could not read the session list. Enforce rather than guess.
-                if (_suspended) { lock (_applyLock) Resume("session list unreadable"); }
-                return;
+                suspend = false; // cannot tell who is here; enforce rather than guess
+                summary = "session list unreadable";
             }
 
-            lock (_applyLock)
+            lock (_sessionLock)
             {
                 if (_sessionStateKnown && suspend == _suspended) return;
                 _sessionStateKnown = true;
+                _suspended = suspend;
 
-                if (suspend) Suspend(summary);
-                else Resume(summary);
+                // The sinkhole decides every DNS answer, so it is flipped here
+                // and NOT behind _applyLock. An enforcement pass can hold that
+                // lock while it waits on the network, and queuing behind it
+                // would leave a standard user unblocked for the whole pass.
+                if (_sinkhole != null) _sinkhole.Suspended = suspend;
             }
+
+            Log(suspend
+                ? "Suspended: " + summary + ". Blocking is off until a standard user logs on."
+                : "Resumed: " + summary + ". Blocking is on.");
+
+            // Everything below is slower and may queue behind an in-flight pass.
+            // Blocking is already correct by this point.
+            if (suspend) ReleaseEnforcement();
+            else RestoreEnforcement();
         }
 
-        // Stand down the two machine-wide layers. The firewall rules are only
-        // disabled, not deleted: rebuilding them means re-resolving every
-        // blocked domain, which takes over a minute.
-        void Suspend(string reason)
+        // Stand down the slower layers. The firewall rules are only disabled,
+        // not deleted: rebuilding them means re-resolving every blocked domain,
+        // which takes over a minute.
+        void ReleaseEnforcement()
         {
-            _suspended = true;
-            if (_sinkhole != null) _sinkhole.Suspended = true;
-            RemoveHostsBlock();
-            FirewallManager.SetEnabled(false);
-            AppBlockManager.SetEnabled(false);
+            // Take _firewallLock so this cannot interleave with a rebuild in
+            // flight: FirewallManager.Apply recreates the rules enabled, so a
+            // rebuild landing after the disable below would quietly re-block the
+            // administrator. Combined with the _suspended re-check inside the
+            // pass, that leaves no window.
+            lock (_firewallLock)
+            {
+                lock (_applyLock) RemoveHostsBlock();
+                FirewallManager.SetEnabled(false);
+                AppBlockManager.SetEnabled(false);
+            }
             FlushDns();
-            Log("Suspended: " + reason + ". Blocking is off until a standard user logs on.");
         }
 
-        void Resume(string reason)
+        void RestoreEnforcement()
         {
-            _suspended = false;
-            if (_sinkhole != null) _sinkhole.Suspended = false;
-            FirewallManager.SetEnabled(true);
-            AppBlockManager.SetEnabled(true);
+            lock (_applyLock)
+            {
+                FirewallManager.SetEnabled(true);
+                AppBlockManager.SetEnabled(true);
+            }
             FlushDns();
-            Log("Resumed: " + reason + ". Blocking is on.");
-            // The hosts block is rewritten by the Apply() that follows.
+            Apply(); // rewrites the hosts block and refreshes the rules
         }
 
         // Strips the managed block while stood down. The cache is cleared too so
@@ -373,27 +403,45 @@ namespace StraitJacket
 
         // ---- firewall enforcement (manual list only) ---------------------------
 
+        // The blocked domains sit on CDNs that hand back a different slice of
+        // their address pool on every lookup, so the resolved set never matches
+        // the previous one and comparing them rebuilds the rules forever.
+        // Accumulating addresses instead does not converge either -- the IPv6
+        // pools are large enough to keep growing indefinitely. So the rules are
+        // simply rebuilt on a fixed cadence, which bounds both the work and the
+        // size of the rule set. Between rebuilds the DNS layers still cover the
+        // domains; this layer only exists to catch a custom resolver.
         void ApplyFirewall(List<string> domains)
         {
-            var ipv4 = new SortedSet<string>();
-            var ipv6 = new SortedSet<string>();
-            foreach (var d in domains)
+            // Drop a tick that arrives mid-pass rather than queueing it: a pass
+            // can spend over a minute waiting on DNS, and the 30s timer would
+            // otherwise stack up passes faster than they drain.
+            if (!System.Threading.Monitor.TryEnter(_firewallLock)) return;
+            try
             {
-                DnsResolver.Resolve(d, ipv4, ipv6);
-                if (!d.StartsWith("www.")) DnsResolver.Resolve("www." + d, ipv4, ipv6);
+                if (_suspended) return;
+                if ((DateTime.UtcNow - _lastFirewallBuildUtc).TotalMinutes < FirewallRebuildMinutes) return;
+
+                var ipv4 = new SortedSet<string>();
+                var ipv6 = new SortedSet<string>();
+                foreach (var d in domains)
+                {
+                    DnsResolver.Resolve(d, ipv4, ipv6);
+                    if (!d.StartsWith("www.")) DnsResolver.Resolve("www." + d, ipv4, ipv6);
+                }
+                ipv4.Remove("0.0.0.0");
+                if (ipv4.Count == 0 && ipv6.Count == 0) return; // resolution failed; keep existing rules
+
+                // A session change can land while the resolution above is still
+                // running. Rebuilding now would recreate the rules ENABLED and
+                // silently undo the release, so bail out instead.
+                if (_suspended) return;
+
+                FirewallManager.Apply(new List<string>(ipv4), new List<string>(ipv6));
+                _lastFirewallBuildUtc = DateTime.UtcNow;
+                Log("Firewall enforced: " + ipv4.Count + " IPv4 + " + ipv6.Count + " IPv6 addresses blocked.");
             }
-            ipv4.Remove("0.0.0.0");
-
-            var combined = new List<string>(ipv4);
-            combined.AddRange(ipv6);
-            if (combined.Count == 0) return; // resolution failed; keep existing rules
-
-            string signature = string.Join(",", combined.ToArray());
-            if (signature == _lastFirewallSignature) return;
-
-            FirewallManager.Apply(new List<string>(ipv4), new List<string>(ipv6));
-            _lastFirewallSignature = signature;
-            Log("Firewall enforced: " + ipv4.Count + " IPv4 + " + ipv6.Count + " IPv6 addresses blocked.");
+            finally { System.Threading.Monitor.Exit(_firewallLock); }
         }
 
         // ---- DNS sinkhole ------------------------------------------------------

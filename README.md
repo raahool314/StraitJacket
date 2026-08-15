@@ -30,6 +30,11 @@ re-resolving every blocked domain, which takes over a minute.
 The service reacts to logon, logoff, and fast-user-switch notifications, and
 re-checks every 30 seconds as a backstop in case an event is missed.
 
+The sinkhole's suspend flag is flipped **immediately**, ahead of the slower
+hosts and firewall work. An enforcement pass can spend over a minute waiting on
+DNS, and queuing the decision behind it would leave a standard user unblocked
+for that whole pass.
+
 **The consequence to understand:** an administrator sharing the machine with a
 logged-on standard user is blocked too. Suspension is all-or-nothing, and it
 fails toward blocking. If you want a clean session, make sure the standard
@@ -76,7 +81,20 @@ For the `blocklist.txt` domains, the service resolves the real IPs by querying
 public DNS resolvers directly (1.1.1.1 / 8.8.8.8), **bypassing** the hosts file,
 then blocks those IPv4/IPv6 addresses with inbound + outbound firewall rules
 named `StraitJacket-Block`. This catches users who switch to a custom DNS server
-to evade the hosts file. Rules are rebuilt only when the resolved IP set changes.
+to evade the hosts file.
+
+Rules are rebuilt on a fixed **10-minute cadence**, not whenever the resolved
+addresses change. The blocked domains sit on CDNs that return a different slice
+of their address pool on every lookup, so comparing each pass against the
+previous one never matches and the rules would be torn down and rebuilt every
+~65 seconds forever. Accumulating addresses instead doesn't converge either —
+measured on a live run, the IPv6 set grew from 1,396 to 1,929 entries in 90
+seconds and was still climbing. A fixed cadence bounds both the work and the
+size of the rule set.
+
+Between rebuilds, an address a blocked domain has just rotated onto is not
+covered. That is acceptable because the DNS layers already block the *domain*;
+this layer exists only to catch someone using a custom resolver.
 The feed/hosts-only lists are deliberately **not** sent to the firewall (too many
 domains, and shared-IP collateral risk).
 
