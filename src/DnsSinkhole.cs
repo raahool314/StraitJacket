@@ -32,6 +32,18 @@ namespace StraitJacket
         TcpListener _tcp4, _tcp6;
         volatile bool _running;
 
+        // While suspended every name is forwarded upstream and nothing is
+        // blocked (see SessionGuard). Deliberately just a flag: standing down
+        // and back up costs nothing and leaves the in-memory block set intact,
+        // so resuming is instant even with ~77k names loaded.
+        volatile bool _suspended;
+
+        public bool Suspended
+        {
+            get { return _suspended; }
+            set { _suspended = value; }
+        }
+
         public DnsSinkhole(Action<string> log) { _log = log; }
 
         // Swap the in-memory data sets (called whenever the block list changes).
@@ -180,6 +192,8 @@ namespace StraitJacket
         // signal the caller to forward the query upstream.
         byte[] BuildLocalResponse(byte[] q)
         {
+            if (_suspended) return null; // forward everything; block nothing
+
             string name;
             int qtype, qend;
             if (!TryParseQuestion(q, out name, out qtype, out qend)) return null;

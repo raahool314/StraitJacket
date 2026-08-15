@@ -17,6 +17,11 @@ namespace StraitJacket
     //                       refreshed daily and cached to disk.
     // The firewall layer only uses blocklist.txt -- resolving tens of thousands
     // of feed domains to IPs would be impractical and pointless.
+    //
+    // Enforcement is machine-wide but not unconditional: none of these layers
+    // can be scoped to a user, so instead the service stands down entirely while
+    // the only people logged on are administrators, and stands back up the
+    // moment a standard user appears. SessionGuard owns that decision.
     public class BlockerService : ServiceBase
     {
         public const string SvcName = "StraitJacket";
@@ -65,12 +70,20 @@ namespace StraitJacket
         string _managedBlockCache;
         string _managedSignature;
 
+        // Set while enforcement is stood down for an administrators-only
+        // machine. Guarded by _applyLock, which also keeps a session change from
+        // racing an enforcement tick.
+        bool _suspended;
+        bool _sessionStateKnown;
+
         public BlockerService()
         {
             ServiceName = SvcName;
             CanStop = true;
             CanShutdown = true;
             CanPauseAndContinue = false;
+            // Logon/logoff/switch notifications drive suspend and resume.
+            CanHandleSessionChangeEvent = true;
 
             _baseDir = AppDomain.CurrentDomain.BaseDirectory;
             _blocklistPath = Path.Combine(_baseDir, "blocklist.txt");
@@ -96,7 +109,7 @@ namespace StraitJacket
             // All heavy work (firewall resolution, launching PowerShell to pin
             // DNS, downloading feeds) happens on a background thread.
             _timer = new Timer(30000) { AutoReset = true };
-            _timer.Elapsed += (s, e) => Apply();
+            _timer.Elapsed += (s, e) => { EvaluateSessions(); Apply(); };
             _timer.Start();
 
             _feedTimer = new Timer(FeedRefreshMs) { AutoReset = true };
@@ -115,9 +128,14 @@ namespace StraitJacket
 
                 // Start the sinkhole, then enforce blocking, then pin DNS to it.
                 _sinkhole = new DnsSinkhole(Log);
+                // The enforcement timer can evaluate sessions before the
+                // sinkhole exists, so adopt whatever was decided in the
+                // meantime instead of starting out of step with it.
+                _sinkhole.Suspended = _suspended;
                 bool bound = _sinkhole.Start();
 
-                Apply(); // hosts block + sinkhole set + firewall rules
+                EvaluateSessions(); // an admin may already be logged on at boot
+                Apply();            // hosts block + sinkhole set + firewall rules
 
                 if (bound)
                 {
@@ -165,8 +183,16 @@ namespace StraitJacket
             {
                 List<string> manual = ReadDomainFile(_blocklistPath);
                 List<string> hostsOnly = ReadDomainFile(_hostsOnlyPath);
-                EnforceHosts(manual, hostsOnly);   // small curated lists only
+
+                // Keep the sinkhole's data current even while stood down -- it
+                // costs nothing, is invisible until the Suspended flag clears,
+                // and means a standard user logging on is blocked immediately
+                // rather than after the next feed refresh.
                 UpdateSinkhole(manual, hostsOnly); // curated lists + large feed
+
+                if (_suspended) return;
+
+                EnforceHosts(manual, hostsOnly);   // small curated lists only
                 ApplyFirewall(manual);             // firewall layer is for the manual list only
 
                 // Program-scoped firewall block for clients (e.g. Steam) whose
@@ -176,6 +202,83 @@ namespace StraitJacket
             catch (Exception ex)
             {
                 Log("Apply error: " + ex.Message);
+            }
+        }
+
+        // ---- session-driven suspend / resume -----------------------------------
+
+        protected override void OnSessionChange(SessionChangeDescription change)
+        {
+            // Logon, logoff, and the connect/disconnect pair behind fast user
+            // switching all change who is present. Re-reading every session
+            // rather than reacting to this one keeps the decision correct when
+            // sessions overlap.
+            EvaluateSessions();
+            Apply();
+        }
+
+        void EvaluateSessions()
+        {
+            bool suspend;
+            string summary;
+            if (!SessionGuard.TryEvaluate(out suspend, out summary))
+            {
+                // Could not read the session list. Enforce rather than guess.
+                if (_suspended) { lock (_applyLock) Resume("session list unreadable"); }
+                return;
+            }
+
+            lock (_applyLock)
+            {
+                if (_sessionStateKnown && suspend == _suspended) return;
+                _sessionStateKnown = true;
+
+                if (suspend) Suspend(summary);
+                else Resume(summary);
+            }
+        }
+
+        // Stand down the two machine-wide layers. The firewall rules are only
+        // disabled, not deleted: rebuilding them means re-resolving every
+        // blocked domain, which takes over a minute.
+        void Suspend(string reason)
+        {
+            _suspended = true;
+            if (_sinkhole != null) _sinkhole.Suspended = true;
+            RemoveHostsBlock();
+            FirewallManager.SetEnabled(false);
+            AppBlockManager.SetEnabled(false);
+            FlushDns();
+            Log("Suspended: " + reason + ". Blocking is off until a standard user logs on.");
+        }
+
+        void Resume(string reason)
+        {
+            _suspended = false;
+            if (_sinkhole != null) _sinkhole.Suspended = false;
+            FirewallManager.SetEnabled(true);
+            AppBlockManager.SetEnabled(true);
+            FlushDns();
+            Log("Resumed: " + reason + ". Blocking is on.");
+            // The hosts block is rewritten by the Apply() that follows.
+        }
+
+        // Strips the managed block while stood down. The cache is cleared too so
+        // the next Apply() writes it back rather than deciding nothing changed.
+        void RemoveHostsBlock()
+        {
+            try
+            {
+                if (!File.Exists(HostsPath)) return;
+                string current = File.ReadAllText(HostsPath);
+                if (current.IndexOf(BeginMarker, StringComparison.Ordinal) < 0) return;
+
+                File.WriteAllText(HostsPath, RemoveManagedBlock(current).TrimEnd() + Environment.NewLine);
+                _managedSignature = null;
+            }
+            catch (Exception ex)
+            {
+                Log("Hosts release error: " + ex.Message);
             }
         }
 

@@ -25,6 +25,16 @@ namespace StraitJacket
             Netsh("advfirewall firewall delete rule name=\"" + RuleName + "\"");
         }
 
+        // Toggle the rules without touching their contents. Used to stand down
+        // while only administrators are logged on: deleting and rebuilding would
+        // mean re-resolving every blocked domain (over a minute) on the way back
+        // up, whereas flipping the enable flag is instant either way.
+        public static void SetEnabled(bool enabled)
+        {
+            Netsh("advfirewall firewall set rule name=\"" + RuleName +
+                  "\" new enable=" + (enabled ? "yes" : "no"));
+        }
+
         static void AddRules(List<string> ips)
         {
             for (int i = 0; i < ips.Count; i += ChunkSize)

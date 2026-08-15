@@ -1,8 +1,39 @@
 # StraitJacket
 
-A Windows service that blocks access to websites for **every** user on the
-machine. It starts automatically at boot, restarts itself if it fails, and
-cannot be stopped by non-administrator users.
+A Windows service that blocks access to websites for **standard (non-admin)
+users**, standing down while the only people logged on are administrators. It
+starts automatically at boot, restarts itself if it fails, and cannot be stopped
+by non-administrator users.
+
+## Who it applies to
+
+None of the blocking layers can be scoped to a user. Windows resolves names
+through one shared service and reads one shared hosts file, so whatever they
+block, they block for everyone. Rather than restrain administrators too, the
+service watches who is logged on and **suspends itself** when nobody needs
+restraining:
+
+> **Suspend** when at least one user is logged on **and every logged-on user is
+> an administrator**. Otherwise **enforce**.
+
+A standard user's session counts whether it is active, switched away from, or
+locked. That matters: fast user switching leaves sessions alive, so a naive
+"stop when an admin logs in" would unblock the machine and let a standard user
+switch straight back into an unrestricted session. No sessions at all (boot, the
+logon screen) enforces, and so does any failure to read the session list.
+
+Suspending strips the hosts block, flips the sinkhole to pass-through, and
+disables — but does **not** delete — the firewall rules. Resuming reverses it.
+Both directions are instant: rebuilding the firewall rules would mean
+re-resolving every blocked domain, which takes over a minute.
+
+The service reacts to logon, logoff, and fast-user-switch notifications, and
+re-checks every 30 seconds as a backstop in case an event is missed.
+
+**The consequence to understand:** an administrator sharing the machine with a
+logged-on standard user is blocked too. Suspension is all-or-nothing, and it
+fails toward blocking. If you want a clean session, make sure the standard
+users are logged **off**, not merely switched away.
 
 ## How it works
 
@@ -132,6 +163,7 @@ firewall rules, and removes the install directory.
 | File                     | Purpose                                                  |
 |--------------------------|----------------------------------------------------------|
 | `src/StraitJacket.cs`    | The Windows Service: enforcement loop, hosts/sinkhole/DNS. |
+| `src/SessionGuard.cs`    | Reads the logged-on sessions and decides suspend vs. enforce. |
 | `src/DnsSinkhole.cs`     | Local DNS server (block from memory + forward upstream).  |
 | `src/DnsResolver.cs`     | Direct-to-DNS resolver (bypasses the hosts file).         |
 | `src/FirewallManager.cs` | Builds/clears the Windows Firewall IP block rules.        |
@@ -148,6 +180,13 @@ firewall rules, and removes the install directory.
 
 ## Notes & limitations
 
+- **An administrator's session suspends blocking machine-wide** while it is the
+  only one. Anything running under another account at that moment — a scheduled
+  task, a service — is unblocked too. Enforcement returns the instant a standard
+  user logs on.
+- **Logoff is detected slightly late.** Windows fires the notification while
+  logoff is still in progress, so a session can still look present; the 30-second
+  re-check catches it. The delay only ever errs toward blocking.
 - **VPN / proxy** traffic is not blocked — it exits via a different IP the
   service never sees, and a VPN adapter brings its own DNS that bypasses the
   sinkhole. For fully tamper-proof filtering, combine this with a network

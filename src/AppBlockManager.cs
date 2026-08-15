@@ -38,6 +38,13 @@ namespace StraitJacket
             Netsh("advfirewall firewall delete rule name=\"" + RuleName + "\"");
         }
 
+        // Toggle the rules in place -- see FirewallManager.SetEnabled.
+        public static void SetEnabled(bool enabled)
+        {
+            Netsh("advfirewall firewall set rule name=\"" + RuleName +
+                  "\" new enable=" + (enabled ? "yes" : "no"));
+        }
+
         // Each entry is either a full path (contains a separator or drive colon)
         // or a bare executable name. Bare names are matched against currently
         // running processes; Steam is additionally located via the registry so it
