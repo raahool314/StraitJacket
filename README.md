@@ -166,6 +166,17 @@ Changes are picked up within ~30 seconds, or apply immediately with:
 sc.exe stop StraitJacket ; sc.exe start StraitJacket
 ```
 
+**If you keep these files in a git repo (or any working copy) separate from the
+install**, editing that copy does nothing on its own — the service only reads
+`C:\Program Files\StraitJacket\`. Copy the edited file(s) over after every
+change, e.g.:
+
+```powershell
+# from an elevated PowerShell:
+Copy-Item .\blocklist.txt "C:\Program Files\StraitJacket\blocklist.txt" -Force
+sc.exe stop StraitJacket ; sc.exe start StraitJacket
+```
+
 ## Uninstall
 
 ```powershell
